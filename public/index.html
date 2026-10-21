@@ -1,0 +1,689 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mineshaft</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<style>
+html,body{overscroll-behavior:none;-webkit-touch-callout:none;margin:0;height:100%;overflow:hidden;background:#000;font-family:monospace;color:#fff;touch-action:none;user-select:none}
+#gl{position:fixed;left:0;top:0;display:block;z-index:0}
+#menu{position:fixed;inset:0;background:#222c;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:30}
+#menu input{padding:10px;font-size:18px;text-align:center}
+button{padding:8px 12px;font-size:16px;cursor:pointer}
+#cross{position:fixed;left:50%;top:50%;width:18px;height:18px;margin:-9px;pointer-events:none}
+#cross:before,#cross:after{content:"";position:absolute;background:#fff;mix-blend-mode:difference}
+#cross:before{left:8px;width:2px;height:18px}#cross:after{top:8px;height:2px;width:18px}
+#bar{position:fixed;bottom:max(8px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);display:flex;gap:3px}
+#bar div{width:42px;height:42px;border:3px solid #555;box-sizing:border-box;background:#0006}
+#bar div.on{border-color:#fff}
+#bar canvas,#pal canvas{width:100%;height:100%;image-rendering:pixelated}
+#net{position:fixed;top:max(8px,env(safe-area-inset-top));right:8px;background:#0009;padding:6px;font-size:13px}
+#joy{position:fixed;width:100px;height:100px;margin:-50px 0 0 -50px;border:2px solid #fff6;border-radius:50%;display:none;pointer-events:none}
+#knob{position:absolute;left:30px;top:30px;width:40px;height:40px;border-radius:50%;background:#fff6}
+#who,#hp,#msg{position:fixed;left:max(8px,env(safe-area-inset-left));background:#0009;padding:6px;font-size:13px}
+#who{top:8px}#hp{top:44px;font-size:16px}#msg{top:80px;display:none}
+#hurt{position:fixed;inset:0;background:#f00;opacity:0;pointer-events:none;transition:opacity .3s}
+#pal{position:fixed;inset:8% 10%;background:#000c;z-index:20;display:none;flex-wrap:wrap;gap:6px;padding:12px;align-content:flex-start;overflow:auto}
+#pal div{width:44px;height:44px;border:2px solid #666;cursor:pointer}
+#tb{display:none;position:fixed;right:10px;bottom:70px;flex-direction:column;gap:8px}
+.touch #tb{display:flex}#tb button{width:60px;height:60px;border-radius:50%;opacity:.7}
+</style></head><body>
+<div id="menu"><h1>Mineshaft</h1><input id="nm" maxlength="16" placeholder="Display name"><button id="play">Play</button></div>
+<div id="cross"></div><div id="bar"></div><div id="hurt"></div><div id="pal"></div>
+<div id="net"></div><div id="joy"><div id="knob"></div></div><div id="who"></div><div id="hp"></div><div id="msg"></div>
+<div id="tb"><button id="bj">Jump</button><button id="ba">Hit</button><button id="bp">Place</button><button id="bv">View</button><button id="be">Blocks</button></div>
+<script>
+(()=>{
+'use strict';
+const CS = 16, CH = 80, SEA = 26;
+const TRANSP = new Set([6, 7, 21, 26, 40, 41, 42, 43, 44, 45]);
+const AT = [], T = (c, k = 'n', a = 0) => AT.push([c, k, a]) - 1;
+const dirt = T(0x80583a), stone = T(0x7f7f84), plank = T(0xb8924f, 'plank');
+const B = {};
+const b = (id, n, top, side = top, bot = side) => (B[id] = { n, f: [top, side, bot] });
+b(1, 'Grass', T(0x5da83f), T(0x80583a, 'gside', 0x5da83f), dirt); b(2, 'Dirt', dirt); b(3, 'Stone', stone);
+b(4, 'Sand', T(0xdbcb8c)); b(5, 'Oak Log', T(0x9c7f4e, 'ring'), T(0x5e4526, 'log')); b(6, 'Oak Leaves', T(0x2f7a22, 'leaf'));
+b(7, 'Water', T(0x2f5fd0)); b(8, 'Planks', plank); b(9, 'Bricks', T(0x9a4a3c, 'brick')); b(10, 'Lamp', T(0xffe08a, 'lamp'));
+b(11, 'Bedrock', T(0x2a2a2a)); b(12, 'Snow', T(0xf4f8ff), T(0x80583a, 'gside', 0xf4f8ff), dirt); b(13, 'Gravel', T(0x8a8580));
+b(14, 'Cobblestone', T(0x77777b, 'ore', 0x4a4a4e)); b(15, 'Coal Ore', T(0x7f7f84, 'ore', 0x1a1a1a)); b(16, 'Iron Ore', T(0x7f7f84, 'ore', 0xd8a37a));
+b(17, 'Gold Ore', T(0x7f7f84, 'ore', 0xf7d83a)); b(18, 'Diamond Ore', T(0x7f7f84, 'ore', 0x4fe8e0));
+b(19, 'Birch Log', T(0xd9c89a, 'ring'), T(0xe8e4d8, 'birch')); b(20, 'Spruce Log', T(0x6b4d2c, 'ring'), T(0x3c2a16, 'log'));
+b(21, 'Spruce Leaves', T(0x1e5a33, 'leaf')); b(22, 'Cactus', T(0x3c8a2e, 'ring'), T(0x3c8a2e, 'cactus')); b(23, 'Sandstone', T(0xd6c58a, 'plank'));
+b(24, 'Clay', T(0xa0a6b8)); b(25, 'Mud', T(0x4b3a2a)); b(26, 'Glass', T(0xcfeaf5, 'glass')); b(27, 'Ice', T(0x9fd0f5));
+b(28, 'Mossy Cobble', T(0x77777b, 'ore', 0x3f7a35)); b(29, 'Bookshelf', plank, T(0xb8924f, 'shelf'));
+b(30, 'White Wool', T(0xeeeeee)); b(31, 'Red Wool', T(0xc0392b)); b(32, 'Blue Wool', T(0x2e5fc9)); b(33, 'Green Wool', T(0x3a9a3a));
+b(34, 'Obsidian', T(0x1a1028)); b(35, 'Crate', T(0xa5793a, 'crate')); b(36, 'Gold Block', T(0xf3d13b)); b(37, 'Iron Block', T(0xd8d8d8)); b(38, 'Diamond Block', T(0x4fe8e0));
+b(40, 'Tall Grass', T(0x5da83f, 'blade')); b(41, 'Red Flower', T(0x3a8a2a, 'flower', 0xd62828)); b(42, 'Yellow Flower', T(0x3a8a2a, 'flower', 0xf2d21b));
+b(43, 'Mushroom', T(0xe8dcc0, 'shroom', 0xc0392b)); b(44, 'Dead Bush', T(0x7a5a30, 'bush')); b(45, 'Torch', T(0x6b4d2c, 'torch'));
+const opq = id => id > 0 && !TRANSP.has(id);
+const solid = id => id > 0 && id !== 7 && id < 40;
+const idx = (x, y, z) => (y * CS + z) * CS + x;
+
+function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function makeNoise(seed) {
+  const r = mulberry(seed), p = new Uint8Array(512), a = [...Array(256).keys()];
+  for (let i = 255; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  for (let i = 0; i < 512; i++) p[i] = a[i & 255];
+  const f = t => t * t * t * (t * (t * 6 - 15) + 10), l = (a, b, t) => a + (b - a) * t;
+  const g = (h, x, y) => { h &= 3; return (h & 1 ? -x : x) + (h & 2 ? -y : y); };
+  return (x, y) => {
+    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255; x -= Math.floor(x); y -= Math.floor(y);
+    const u = f(x), v = f(y), A = p[X] + Y, B = p[X + 1] + Y;
+    return 0.5 * l(l(g(p[A], x, y), g(p[B], x - 1, y), u), l(g(p[A + 1], x, y - 1), g(p[B + 1], x - 1, y - 1), u), v);
+  };
+}
+function hash(x, z, s) { let h = Math.imul(x | 0, 374761393) ^ Math.imul(z | 0, 668265263) ^ s; h = Math.imul(h ^ h >>> 13, 1274126177); return ((h ^ h >>> 16) >>> 0) / 4294967296; }
+
+function makeAtlas() {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d'), im = x.createImageData(16, 16), d = im.data;
+  AT.forEach(([col, k, acc], i) => {
+    const R = col >> 16 & 255, G = col >> 8 & 255, Bc = col & 255, ar = acc >> 16 & 255, ag = acc >> 8 & 255, ab = acc & 255;
+    for (let py = 0; py < 16; py++) for (let px = 0; px < 16; px++) {
+      const h = hash(px + i * 31, py, 77), h2 = hash(px * 3, py * 5, i);
+      let r = R, g = G, b = Bc, m = .88 + h * .24, al = 255;
+      const set = (a, bb, cc) => { r = a; g = bb; b = cc; };
+      if (k === 'gside' && py < 4 + (h < .4 ? 1 : 0)) set(ar, ag, ab);
+      else if (k === 'ore' && h2 < .11) set(ar, ag, ab);
+      else if (k === 'brick') { const off = (py >> 2) & 1 ? 4 : 0; if (py % 4 === 3 || (px + off) % 8 === 7) set(190, 190, 185); }
+      else if (k === 'plank' && py % 4 === 3) m *= .7;
+      else if (k === 'log' && (px % 4 === 0 || (px % 4 === 3 && h < .5))) m *= .72;
+      else if (k === 'ring') { const dd = Math.max(Math.abs(px - 7.5), Math.abs(py - 7.5)) | 0; m *= dd === 7 ? .7 : dd % 3 === 2 ? .82 : 1; }
+      else if (k === 'leaf' && h < .25) m *= .6;
+      else if (k === 'glass') { const e = !px || !py || px === 15 || py === 15; if (!e && !(px === py || (px === py + 1 && py < 6))) al = 0; }
+      else if (k === 'shelf') { if (py < 3 || py > 12) m *= 1; else { const bk = [0xaa3333, 0x3366aa, 0x33aa55, 0xccaa33][(px >> 1) % 4]; if (px % 2 || h > .2) set(bk >> 16 & 255, bk >> 8 & 255, bk & 255); } }
+      else if (k === 'lamp') m = px % 8 === 0 || py % 8 === 0 ? .6 : 1.1;
+      else if (k === 'crate') { if (px < 2 || py < 2 || px > 13 || py > 13) m *= .65; else if (px === py || px === 15 - py) m *= .8; }
+      else if (k === 'birch' && h < .15 && py % 3 === 0) set(40, 40, 40);
+      else if (k === 'cactus') { if (px % 5 === 2) m *= .7; if (h < .04) set(230, 230, 200); }
+      else if (k === 'blade') { al = px % 3 && py >= 16 - (6 + (px * 5) % 8) ? 255 : 0; }
+      else if (k === 'flower') { al = 0; const dd = Math.hypot(px - 7.5, py - 4.5); if (dd < 3) { set(ar, ag, ab); al = 255; } else if ((px === 7 || px === 8) && py >= 7) al = 255; }
+      else if (k === 'shroom') { al = 0; if (py >= 5 && py <= 9 && px >= 4 && px <= 11 && !(py === 5 && (px < 6 || px > 9))) { set(ar, ag, ab); al = 255; } else if ((px === 7 || px === 8) && py >= 10 && py <= 14) al = 255; }
+      else if (k === 'bush') al = (px + py) % 5 === 0 && py > 4 || (px === 8 && py > 6) ? 255 : 0;
+      else if (k === 'torch') { al = (px === 7 || px === 8) && py >= 5 ? 255 : 0; if (py < 8) set(255, 210, 80); }
+      const o = (py * 16 + px) * 4;
+      d[o] = Math.min(255, r * m); d[o + 1] = Math.min(255, g * m); d[o + 2] = Math.min(255, b * m); d[o + 3] = al;
+    }
+    x.putImageData(im, (i % 8) * 16, (i >> 3) * 16);
+  });
+  return c;
+}
+
+const ck = (cx, cz) => (cx & 0xffff) * 65536 + (cz & 0xffff);
+const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+class World {
+  constructor(seed) { this.seed = seed; this.noise = makeNoise(seed); this.chunks = new Map(); }
+  column(wx, wz) {
+    const n = this.noise;
+    const Tm = n(wx / 420 + 11, wz / 420 + 11) * 2.6, M = n(wx / 380 - 77, wz / 380 - 77) * 2.6, mt = n(wx / 170 + 300, wz / 170 + 300) * 2.6;
+    const cont = n(wx / 150, wz / 150) * 1.3 + n(wx / 60, wz / 60) * .5 + n(wx / 22, wz / 22) * .18 + n(wx / 9, wz / 9) * .05;
+    let h = SEA + 3 + cont * 16, bio = 'plains';
+    if (h > SEA + 1) { if (Tm > .5 && M < .3) bio = 'desert'; else if (Tm < -.5) bio = 'snow'; else if (M > .7 && Tm > -.4 && Tm < .6) bio = 'swamp'; else if (M > .25) bio = 'forest'; }
+    if (bio === 'swamp') h = SEA + Math.round(n(wx / 14, wz / 14) * 5);
+    else if (mt > .35) { h += (mt - .35) * 34; if (h > SEA + 20) bio = 'mountain'; }
+    h = Math.max(3, Math.min(CH - 12, Math.floor(h)));
+    if (h < SEA - 1) bio = 'ocean'; else if (h <= SEA + 1 && bio !== 'swamp' && bio !== 'snow') bio = 'beach';
+    return { h, bio };
+  }
+  gen(cx, cz) {
+    const d = new Uint8Array(CS * CS * CH), n = this.noise, S = this.seed; let mh = SEA;
+    const put = (x, y, z, id, over) => { if (x < 0 || z < 0 || x > 15 || z > 15 || y < 0 || y >= CH) return; const i = idx(x, y, z); if (over || !d[i]) d[i] = id; };
+    for (let lx = 0; lx < CS; lx++) for (let lz = 0; lz < CS; lz++) {
+      const wx = cx * CS + lx, wz = cz * CS + lz, { h, bio } = this.column(wx, wz);
+      if (h > mh) mh = h;
+      const top = { desert: 4, beach: 4, ocean: 4, snow: 12, mountain: h > SEA + 34 ? 12 : 3, swamp: h <= SEA ? 25 : 1 }[bio] || 1;
+      const sub = { desert: 23, beach: 4, ocean: 4, mountain: 3, swamp: 25 }[bio] || 2;
+      for (let y = 0; y <= h; y++) {
+        let id = y === 0 ? 11 : y < h - 3 ? 3 : y < h ? sub : top;
+        if (y > 4 && y < h - 2 && Math.abs(n(wx / 18 + y * .37, wz / 18 - y * .21)) < .06 && Math.abs(n(wx / 18 - y * .29 + 50, wz / 18 + y * .33 + 50)) < .06) id = 0;
+        else if (id === 3) { const r = hash(wx + y * 131, wz + y * 7, S); id = r < .012 ? 15 : r < .019 && y < 40 ? 16 : r < .022 && y < 22 ? 17 : r < .0235 && y < 14 ? 18 : r > .985 && y < 50 ? 13 : 3; }
+        else if ((bio === 'ocean' || bio === 'beach') && y === h && hash(wx, wz, S + 3) < .12) id = bio === 'ocean' ? 24 : 4;
+        d[idx(lx, y, lz)] = id;
+      }
+      for (let y = h + 1; y <= SEA; y++) d[idx(lx, y, lz)] = bio === 'snow' && y === SEA ? 27 : 7;
+      if (h <= SEA) continue;
+      const r = hash(wx, wz, S + 1), r2 = hash(wz, wx, S + 2), inner = lx >= 3 && lx <= 12 && lz >= 3 && lz <= 12, y0 = h + 1;
+      const tree = (log, leaf, th) => { if (h + th + 2 > mh) mh = h + th + 2; for (let y = y0; y < y0 + th; y++) put(lx, y, lz, log); for (let dy = th - 2; dy <= th + 1; dy++) { const rad = dy >= th ? 1 : 2; for (let dx = -rad; dx <= rad; dx++) for (let dz = -rad; dz <= rad; dz++) if (!(Math.abs(dx) === rad && Math.abs(dz) === rad && (dy > th || hash(wx + dx, wz + dz, S) < .5))) put(lx + dx, y0 + dy, lz + dz, leaf); } };
+      if (bio === 'plains') { if (r < .003 && inner) tree(5, 6, 4 + (r2 * 3 | 0)); else if (r > .9) put(lx, y0, lz, 40); else if (r > .86) put(lx, y0, lz, r2 < .5 ? 41 : 42); }
+      else if (bio === 'forest') { if (r < .045 && inner) r2 < .3 ? tree(19, 6, 5 + (r2 * 10 | 0) % 3) : tree(5, 6, 4 + (r2 * 4 | 0)); else if (r > .93) put(lx, y0, lz, 40); else if (r > .985) put(lx, y0, lz, 43); }
+      else if (bio === 'swamp') { if (r < .025 && inner) tree(5, 6, 4 + (r2 * 2 | 0)); else if (r > .97) put(lx, y0, lz, 43); else if (r > .88) put(lx, y0, lz, 40); }
+      else if (bio === 'snow') { if (r < .03 && inner) { const th = 5 + (r2 * 3 | 0); if (h + th + 3 > mh) mh = h + th + 3; for (let y = y0; y < y0 + th; y++) put(lx, y, lz, 20); for (let dy = 2; dy <= th + 1; dy++) { const rad = Math.max(0, Math.floor((th + 1 - dy) / 2)); for (let dx = -rad; dx <= rad; dx++) for (let dz = -rad; dz <= rad; dz++) if (!(rad && Math.abs(dx) === rad && Math.abs(dz) === rad)) put(lx + dx, y0 + dy, lz + dz, 21); } } }
+      else if (bio === 'desert') { if (r < .006) { for (let y = y0; y < y0 + 2 + (r2 * 3 | 0); y++) put(lx, y, lz, 22); if (mh < h + 5) mh = h + 5; } else if (r > .985) put(lx, y0, lz, 44); }
+    }
+    if (mh < SEA + 3) mh = SEA + 3;
+    const c = { cx, cz, d, dirty: true, meshes: [], maxY: Math.min(CH - 1, mh + 2), miss: 0 };
+    this.chunks.set(ck(cx, cz), c);
+    for (let k = 0; k < 4; k++) { const q = this.chunks.get(ck(cx + DIRS[k][0], cz + DIRS[k][1])); if (q && (q.miss >> (k ^ 1)) & 1) q.dirty = true; }
+    return c;
+  }
+  chunk(x, z) { return this.chunks.get(ck(Math.floor(x) >> 4, Math.floor(z) >> 4)); }
+  get(x, y, z) { if (y < 0 || y >= CH) return 0; const c = this.chunks.get(ck(x >> 4, z >> 4)); return c ? c.d[idx(x & 15, y, z & 15)] : 0; }
+  set(x, y, z, id) {
+    const c = this.chunks.get(ck(x >> 4, z >> 4)); if (!c || y < 0 || y >= CH) return;
+    c.d[idx(x & 15, y, z & 15)] = id; c.dirty = true; if (y > c.maxY) c.maxY = Math.min(CH - 1, y + 1);
+    const lx = x & 15, lz = z & 15, mark = (a, b) => { const q = this.chunks.get(ck(a, b)); if (q) q.dirty = true; };
+    if (lx === 0) mark(c.cx - 1, c.cz); if (lx === 15) mark(c.cx + 1, c.cz);
+    if (lz === 0) mark(c.cx, c.cz - 1); if (lz === 15) mark(c.cx, c.cz + 1);
+  }
+}
+
+const FACES = [
+  { d: [1, 0, 0], v: [[1, 0, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]], s: .85 },
+  { d: [-1, 0, 0], v: [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]], s: .85 },
+  { d: [0, 1, 0], v: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]], s: 1 },
+  { d: [0, -1, 0], v: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]], s: .55 },
+  { d: [0, 0, 1], v: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], s: .7 },
+  { d: [0, 0, -1], v: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]], s: .7 },
+];
+const AOO = FACES.map(f => f.v.map(v => {
+  const nax = f.d[0] ? 0 : f.d[1] ? 1 : 2, t1 = (nax + 1) % 3, t2 = (nax + 2) % 3;
+  const mk = (a, b) => { const r = [f.d[0], f.d[1], f.d[2]]; if (a) r[t1] += v[t1] ? 1 : -1; if (b) r[t2] += v[t2] ? 1 : -1; return r; };
+  return [mk(1, 0), mk(0, 1), mk(1, 1)];
+}));
+const CROSS = [[[0, 0, 0], [1, 0, 1], [1, 1, 1], [0, 1, 0]], [[1, 0, 0], [0, 0, 1], [0, 1, 1], [1, 1, 0]]];
+const AOB = [140, 184, 220, 255], opqF = id => id > 0 && id !== 7 && id !== 26 && id < 40, E = .0015;
+const UV = [[0, 0], [1, 0], [1, 1], [0, 1]];
+function quad(o, x, y, z, verts, tile, sh, flip, low) {
+  const n = o.p.length / 3, u0 = (tile % 8) / 8 + E, v0 = 1 - ((tile >> 3) + 1) / 8 + E, du = 1 / 8 - 2 * E;
+  for (let k = 0; k < 4; k++) {
+    const v = verts[k]; o.p.push(x + v[0], y + v[1] * (low && v[1] ? .88 : 1), z + v[2]);
+    const s = Math.min(255, sh[k] | 0); o.c.push(s, s, s); o.u.push(u0 + UV[k][0] * du, v0 + UV[k][1] * du);
+  }
+  if (flip) o.i.push(n, n + 1, n + 3, n + 1, n + 2, n + 3); else o.i.push(n, n + 1, n + 2, n, n + 2, n + 3);
+}
+function buildMesh(w, c, opt = {}) {
+  const out = [0, 1].map(() => ({ p: [], c: [], u: [], i: [] })), nbs = new Array(9);
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { const q = dx || dz ? w.chunks.get(ck(c.cx + dx, c.cz + dz)) : c; nbs[(dz + 1) * 3 + dx + 1] = q ? q.d : null; }
+  let miss = 0; DIRS.forEach(([dx, dz], k) => { if (!nbs[(dz + 1) * 3 + dx + 1]) miss |= 1 << k; }); c.miss = miss;
+  const g = (x, y, z) => { if (y < 0) return 3; if (y >= CH) return 0; const a = nbs[((z >> 4) + 1) * 3 + (x >> 4) + 1]; return a ? a[(y * CS + (z & 15)) * CS + (x & 15)] : 3; };
+  const OP = opt.fast ? opqF : opq, ao = opt.ao, my = c.maxY, top = new Int16Array(CS * CS), A = [0, 0, 0, 0], S4 = [0, 0, 0, 0];
+  for (let z = 0; z < CS; z++) for (let x = 0; x < CS; x++) { let y = my; while (y > 0 && !OP(c.d[idx(x, y, z)])) y--; top[z * CS + x] = y; }
+  for (let y = 0; y <= my; y++) for (let z = 0; z < CS; z++) for (let x = 0; x < CS; x++) {
+    const id = c.d[idx(x, y, z)]; if (!id) continue;
+    const def = B[id], tp = top[z * CS + x], L = y >= tp ? 1 : Math.max(.28, 1 - (tp - y) * .13);
+    if (id >= 40) { const sh = L * 242; S4[0] = S4[1] = S4[2] = S4[3] = sh; for (const q of CROSS) { quad(out[0], x, y, z, q, def.f[0], S4, 0); const o = out[0], n = o.p.length / 3; o.i.push(n - 4, n - 2, n - 3, n - 4, n - 1, n - 2); } continue; }
+    const o = out[id === 7 ? 1 : 0];
+    for (let fi = 0; fi < 6; fi++) {
+      const f = FACES[fi], nb = g(x + f.d[0], y + f.d[1], z + f.d[2]);
+      if (OP(nb) || (nb === id && TRANSP.has(id))) continue;
+      if (id === 7 && nb !== 0 && f.d[1] !== 1) continue;
+      const base = f.s * L * 255 * (.95 + hash(c.cx * 16 + x + y * 7, c.cz * 16 + z, 5) * .08);
+      if (ao && id !== 7) {
+        for (let vi = 0; vi < 4; vi++) { const q = AOO[fi][vi], a1 = OP(g(x + q[0][0], y + q[0][1], z + q[0][2])), a2 = OP(g(x + q[1][0], y + q[1][1], z + q[1][2])), a3 = OP(g(x + q[2][0], y + q[2][1], z + q[2][2])); A[vi] = a1 && a2 ? 0 : 3 - (a1 + a2 + a3); S4[vi] = base * AOB[A[vi]] / 255; }
+        quad(o, x, y, z, f.v, def.f[fi === 2 ? 0 : fi === 3 ? 2 : 1], S4, A[0] + A[2] < A[1] + A[3], 0);
+      } else { S4[0] = S4[1] = S4[2] = S4[3] = base; quad(o, x, y, z, f.v, def.f[fi === 2 ? 0 : fi === 3 ? 2 : 1], S4, 0, id === 7 && nb === 0); }
+    }
+  }
+  return out;
+}
+
+// ================= GAME =================
+const $ = id => document.getElementById(id);
+const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+const lsDel = k => { try { localStorage.removeItem(k); } catch {} };
+window.addEventListener('error', e => { const m = $('msg'); m.style.display = 'block'; m.textContent = 'Error: ' + e.message + (e.lineno ? ' (line ' + e.lineno + ')' : ''); });
+let name = lsGet('mc_name') || '';
+$('play').onclick = () => { const v = $('nm').value.trim(); if (!v) return; name = v; lsSet('mc_name', v); start(); };
+$('nm').addEventListener('keydown', e => { if (e.key === 'Enter') $('play').click(); });
+
+const touch = matchMedia('(pointer: coarse)').matches || ('ontouchstart' in window && !matchMedia('(pointer: fine)').matches);
+if (touch) document.body.classList.add('touch');
+const HOT = [3, 2, 1, 8, 5, 6, 26, 10, 45], D = 4.2, PI = Math.PI;
+let sel = 0, world = null, myId = 0, hp = 20, kills = 0, view = 1, started = false, me = null;
+
+// ---------- quality ----------
+const weak = touch && ((navigator.deviceMemory || 4) <= 3 || (navigator.hardwareConcurrency || 4) <= 4);
+const QS = [{ R: 3, pr: .55, ao: 0, fast: 1, cl: 0, b: 5 }, { R: 4, pr: .75, ao: 0, fast: 1, cl: 0, b: 6 }, { R: 5, pr: 1, ao: 1, fast: 0, cl: 1, b: 8 }, { R: 7, pr: Math.min(window.devicePixelRatio || 1, 1.5), ao: 1, fast: 0, cl: 1, b: 10 }];
+const qMax = touch ? 2 : 3;
+let qMode = lsGet('mc_q') || 'auto', qLevel = weak ? 0 : touch ? 1 : 3, R = QS[qLevel].R;
+const meshOpt = { ao: QS[qLevel].ao, fast: QS[qLevel].fast };
+let rescan = true, showClouds = !!QS[qLevel].cl, fogN = 40, fogF = 80;
+
+// ---------- minimal WebGL renderer ----------
+const cv = document.createElement('canvas'); cv.id = 'gl'; document.body.prepend(cv);
+let gl = null;
+try { gl = cv.getContext('webgl', { antialias: !touch, alpha: false, powerPreference: 'high-performance' }) || cv.getContext('experimental-webgl'); } catch (e) { }
+if (!gl) { document.body.innerHTML = '<p style="padding:20px;color:#fff">WebGL is not available in this browser, so the game cannot start.</p>'; throw new Error('no webgl'); }
+const u32 = gl.getExtension('OES_element_index_uint');
+cv.addEventListener('webglcontextlost', e => e.preventDefault());
+cv.addEventListener('webglcontextrestored', () => location.reload());
+const FSP = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
+function mkProg(vs, fs, binds) {
+  const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error('shader: ' + gl.getShaderInfoLog(o)); return o; };
+  const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, FSP + fs));
+  binds.forEach((n, i) => gl.bindAttribLocation(p, i, n)); gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(p));
+  const L = {}; return { p, u: n => (n in L) ? L[n] : (L[n] = gl.getUniformLocation(p, n)) };
+}
+const TP = mkProg(`attribute vec3 aP;attribute vec2 aUV;attribute vec4 aC;uniform mat4 uVP;uniform vec3 uOff,uCam,uFog;varying vec2 vUV;varying vec3 vC;varying float vF;
+void main(){vec3 w=aP+uOff;gl_Position=uVP*vec4(w,1.);vUV=aUV;vC=aC.rgb;float d=distance(w,uCam);vF=clamp((d-uFog.x)/(uFog.y-uFog.x),0.,1.);}`,
+  `uniform sampler2D uTex;uniform vec3 uTint,uFogC;uniform float uAlpha,uCut;varying vec2 vUV;varying vec3 vC;varying float vF;
+void main(){vec4 t=texture2D(uTex,vUV);if(uCut>.5&&t.a<.5)discard;vec3 c=t.rgb*vC*uTint;gl_FragColor=vec4(mix(c,uFogC,vF),uCut>.5?1.:uAlpha);}`, ['aP', 'aUV', 'aC']);
+const OP = mkProg(`attribute vec3 aP,aN;attribute vec2 aUV;uniform mat4 uVP,uModel;uniform vec3 uScale,uCam,uFog;uniform vec4 uUV;varying vec2 vUV;varying float vL,vF;
+void main(){vec4 w=uModel*vec4(aP*uScale,1.);gl_Position=uVP*w;vUV=aUV*uUV.xy+uUV.zw;vec3 n=normalize(mat3(uModel)*aN);vL=.55+.45*max(0.,dot(n,normalize(vec3(.4,.8,.45))));float d=distance(w.xyz,uCam);vF=clamp((d-uFog.x)/(uFog.y-uFog.x),0.,1.);}`,
+  `uniform sampler2D uTex;uniform vec3 uColor,uTint,uFogC;uniform float uMode,uFlash,uAlpha;varying vec2 vUV;varying float vL,vF;
+void main(){vec3 c;float a=1.;
+if(uMode<.5){c=uColor*vL*uTint;}
+else if(uMode<1.5){vec4 t=texture2D(uTex,vUV);c=t.rgb*vL*uTint;a=t.a;if(a<.05)discard;}
+else if(uMode<2.5){c=uColor;}
+else{vec4 t=texture2D(uTex,vUV);c=t.rgb*uTint;a=t.a*uAlpha;if(a<.02)discard;}
+c=mix(c,vec3(.85,.1,.1),uFlash*.55);gl_FragColor=vec4(mix(c,uFogC,vF),a);}`, ['aP', 'aN', 'aUV']);
+const LP = mkProg(`attribute vec2 aK;uniform mat4 uP,uV;uniform vec3 uC;uniform vec2 uS;varying vec2 vUV;
+void main(){vec4 p=uV*vec4(uC,1.);p.xy+=aK*uS;gl_Position=uP*p;vUV=aK*.5+.5;}`,
+  `uniform sampler2D uTex;varying vec2 vUV;void main(){vec4 t=texture2D(uTex,vUV);if(t.a<.05)discard;gl_FragColor=t;}`, ['aK']);
+
+function mkTex(canvas, repeat, smooth) {
+  const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+  const f = smooth ? gl.LINEAR : gl.NEAREST, w = repeat ? gl.REPEAT : gl.CLAMP_TO_EDGE;
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, w); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, w); return t;
+}
+// matrices (column-major)
+const M = {
+  mul(a, b) { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s; } return o; },
+  id() { const o = new Float32Array(16); o[0] = o[5] = o[10] = o[15] = 1; return o; },
+  trans(x, y, z) { const o = M.id(); o[12] = x; o[13] = y; o[14] = z; return o; },
+  scl(s) { const o = M.id(); o[0] = o[5] = o[10] = s; return o; },
+  rotX(a) { const o = M.id(), c = Math.cos(a), s = Math.sin(a); o[5] = c; o[6] = s; o[9] = -s; o[10] = c; return o; },
+  rotY(a) { const o = M.id(), c = Math.cos(a), s = Math.sin(a); o[0] = c; o[2] = -s; o[8] = s; o[10] = c; return o; },
+  persp(f, a, n, fa) { const t = 1 / Math.tan(f / 2), o = new Float32Array(16); o[0] = t / a; o[5] = t; o[10] = (fa + n) / (n - fa); o[11] = -1; o[14] = 2 * fa * n / (n - fa); return o; },
+  look(ex, ey, ez, cx, cy, cz) {
+    let zx = ex - cx, zy = ey - cy, zz = ez - cz, l = Math.hypot(zx, zy, zz) || 1; zx /= l; zy /= l; zz /= l;
+    let xx = zz, xy = 0, xz = -zx; l = Math.hypot(xx, xz) || 1; xx /= l; xz /= l;
+    const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx, o = new Float32Array(16);
+    o[0] = xx; o[1] = yx; o[2] = zx; o[4] = xy; o[5] = yy; o[6] = zy; o[8] = xz; o[9] = yz; o[10] = zz;
+    o[12] = -(xx * ex + xy * ey + xz * ez); o[13] = -(yx * ex + yy * ey + yz * ez); o[14] = -(zx * ex + zy * ey + zz * ez); o[15] = 1; return o;
+  },
+};
+// static geometry
+function mkGeo(verts, idx, mode) {
+  const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+  const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
+  return { vb, ib, n: idx.length, mode };
+}
+const boxG = (() => {
+  const v = [], ix = [];
+  FACES.forEach(f => { const n = v.length / 8; f.v.forEach((p, k) => v.push(p[0] - .5, p[1] - .5, p[2] - .5, f.d[0], f.d[1], f.d[2], UV[k][0], UV[k][1])); ix.push(n, n + 1, n + 2, n, n + 2, n + 3); });
+  return mkGeo(v, ix, gl.TRIANGLES);
+})();
+const quadG = mkGeo([-.5, -.5, 0, 0, 0, 1, 0, 0, .5, -.5, 0, 0, 0, 1, 1, 0, .5, .5, 0, 0, 0, 1, 1, 1, -.5, .5, 0, 0, 0, 1, 0, 1], [0, 1, 2, 0, 2, 3], gl.TRIANGLES);
+const wireG = (() => {
+  const c = [], e = [[0, 1], [1, 3], [3, 2], [2, 0], [4, 5], [5, 7], [7, 6], [6, 4], [0, 4], [1, 5], [2, 6], [3, 7]], v = [], ix = [];
+  for (let i = 0; i < 8; i++) c.push([(i & 1) - .5, ((i >> 1) & 1) - .5, ((i >> 2) & 1) - .5]);
+  c.forEach(p => v.push(p[0], p[1], p[2], 0, 1, 0, 0, 0)); e.forEach(p => ix.push(p[0], p[1]));
+  return mkGeo(v, ix, gl.LINES);
+})();
+const labG = (() => { const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1]), gl.STATIC_DRAW); const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([0, 1, 2, 0, 2, 3]), gl.STATIC_DRAW); return { vb, ib }; })();
+
+const atlas = makeAtlas(), atlasTex = mkTex(atlas, false, false);
+const faceCv = document.createElement('canvas'); faceCv.width = faceCv.height = 16;
+{ const x = faceCv.getContext('2d'); x.fillStyle = '#e0ac86'; x.fillRect(0, 0, 16, 16); x.fillStyle = '#4a2f1a'; x.fillRect(0, 0, 16, 3); x.fillStyle = '#fff'; x.fillRect(3, 7, 3, 2); x.fillRect(10, 7, 3, 2); x.fillStyle = '#2a4aa0'; x.fillRect(4, 7, 2, 2); x.fillRect(10, 7, 2, 2); x.fillStyle = '#8a4a3a'; x.fillRect(6, 11, 4, 1); }
+const faceTex = mkTex(faceCv, false, false);
+const cloudCv = document.createElement('canvas'); cloudCv.width = cloudCv.height = 64;
+{ const x = cloudCv.getContext('2d'); x.fillStyle = 'rgba(255,255,255,.9)'; for (let i = 0; i < 26; i++) x.fillRect(Math.random() * 56, Math.random() * 56, 6 + Math.random() * 14, 4 + Math.random() * 8); }
+const cloudTex = mkTex(cloudCv, true, false);
+
+const SKYD = [.529, .808, .922], SKYN = [.024, .039, .125];
+let sky = SKYD.slice(), tint = [1, 1, 1];
+function resizeGL() {
+  const pr = QS[qLevel].pr; cv.width = Math.max(1, innerWidth * pr | 0); cv.height = Math.max(1, innerHeight * pr | 0);
+  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px'; gl.viewport(0, 0, cv.width, cv.height);
+}
+addEventListener('resize', resizeGL); addEventListener('orientationchange', () => setTimeout(resizeGL, 200));
+const cam = { x: 0, y: 0, z: 0, fov: 75 }, look = { x: 0, y: 0, z: -1 };
+const attrs = n => { for (let i = 0; i < 3; i++) i < n ? gl.enableVertexAttribArray(i) : gl.disableVertexAttribArray(i); };
+let VP, PROJ, VIEW, planes = [];
+function setPlanes() {
+  planes = []; const m = VP, row = i => [m[i], m[4 + i], m[8 + i], m[12 + i]];
+  const r0 = row(0), r1 = row(1), r2 = row(2), r3 = row(3);
+  for (const [a, s] of [[r0, 1], [r0, -1], [r1, 1], [r1, -1], [r2, 1], [r2, -1]]) planes.push([r3[0] + s * a[0], r3[1] + s * a[1], r3[2] + s * a[2], r3[3] + s * a[3]]);
+}
+function visible(c) {
+  const x0 = c.cx * CS, z0 = c.cz * CS, y1 = c.maxY + 1;
+  for (const p of planes) { const px = p[0] >= 0 ? x0 + CS : x0, py = p[1] >= 0 ? y1 : 0, pz = p[2] >= 0 ? z0 + CS : z0; if (p[0] * px + p[1] * py + p[2] * pz + p[3] < 0) return false; }
+  return true;
+}
+function drawGeoObj(g, model, sc, col, mode, flash, tex, alpha, uv) {
+  gl.uniformMatrix4fv(OP.u('uModel'), false, model); gl.uniform3f(OP.u('uScale'), sc[0], sc[1], sc[2]); gl.uniform3f(OP.u('uColor'), col[0], col[1], col[2]);
+  gl.uniform1f(OP.u('uMode'), mode); gl.uniform1f(OP.u('uFlash'), flash || 0); gl.uniform1f(OP.u('uAlpha'), alpha === undefined ? 1 : alpha);
+  gl.uniform3f(OP.u('uFog'), mode === 3 ? 1e8 : fogN, mode === 3 ? 2e8 : fogF, 0);
+  const u = uv || [1, 1, 0, 0]; gl.uniform4f(OP.u('uUV'), u[0], u[1], u[2], u[3]);
+  if (tex) gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.bindBuffer(gl.ARRAY_BUFFER, g.vb); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 32, 0); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 32, 12); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 32, 24);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, g.ib); gl.drawElements(g.mode, g.n, gl.UNSIGNED_SHORT, 0);
+}
+function useObj() {
+  gl.useProgram(OP.p); attrs(3); gl.uniformMatrix4fv(OP.u('uVP'), false, VP); gl.uniform3f(OP.u('uCam'), cam.x, cam.y, cam.z);
+  gl.uniform3f(OP.u('uTint'), tint[0], tint[1], tint[2]); gl.uniform3f(OP.u('uFogC'), sky[0], sky[1], sky[2]); gl.uniform1i(OP.u('uTex'), 0);
+}
+const SK = [.88, .67, .53], HAIR = [.29, .18, .1], BLACK = [0, 0, 0];
+function drawChar(ch, x, y, z, ry) {
+  const root = M.mul(M.mul(M.trans(x, y, z), M.rotY(ry + PI)), M.scl(.9)), fl = ch.flash > 0 ? 1 : 0;
+  const limb = (px, py, ang, sz, col) => drawGeoObj(boxG, M.mul(M.mul(M.mul(root, M.trans(px, py, 0)), M.rotX(ang)), M.trans(0, -sz[1] / 2, 0)), sz, col, 0, fl);
+  const blk = (px, py, pz, sz, col) => drawGeoObj(boxG, M.mul(root, M.trans(px, py, pz)), sz, col, 0, fl);
+  limb(0, 1.5, 0, [.5, .75, .25], ch.shirt); limb(-.125, .75, ch.ll, [.25, .75, .25], ch.pants); limb(.125, .75, ch.lr, [.25, .75, .25], ch.pants);
+  limb(-.375, 1.5, ch.al, [.25, .75, .25], ch.shirt); limb(.375, 1.5, ch.ar, [.25, .75, .25], ch.shirt);
+  blk(0, 1.75, 0, [.5, .5, .5], SK); blk(0, 1.98, 0, [.52, .1, .52], HAIR); blk(0, 1.78, -.2, [.52, .5, .12], HAIR);
+  gl.disable(gl.CULL_FACE); drawGeoObj(quadG, M.mul(root, M.trans(0, 1.75, .2515)), [.5, .5, 1], BLACK, 1, fl, faceTex); gl.enable(gl.CULL_FACE);
+}
+function drawLabel(ch, x, y, z) {
+  gl.uniform3f(LP.u('uC'), x, y + 2.2, z); gl.uniform2f(LP.u('uS'), 1, .25); gl.bindTexture(gl.TEXTURE_2D, ch.label);
+  gl.bindBuffer(gl.ARRAY_BUFFER, labG.vb); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, labG.ib); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+}
+let selBox = null, cloudOff = 0;
+function render() {
+  const asp = cv.width / cv.height;
+  PROJ = M.persp(cam.fov * PI / 180, asp, .1, 400); VIEW = M.look(cam.x, cam.y, cam.z, cam.x + look.x, cam.y + look.y, cam.z + look.z); VP = M.mul(PROJ, VIEW); setPlanes();
+  gl.clearColor(sky[0], sky[1], sky[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK); gl.disable(gl.BLEND); gl.depthMask(true); gl.activeTexture(gl.TEXTURE0);
+  const vis = []; for (const c of world.chunks.values()) if (c.meshes.length && visible(c)) vis.push(c);
+  const terr = (water) => {
+    gl.useProgram(TP.p); attrs(3); gl.uniformMatrix4fv(TP.u('uVP'), false, VP); gl.uniform3f(TP.u('uCam'), cam.x, cam.y, cam.z); gl.uniform3f(TP.u('uFog'), fogN, fogF, 0);
+    gl.uniform3f(TP.u('uTint'), tint[0], tint[1], tint[2]); gl.uniform3f(TP.u('uFogC'), sky[0], sky[1], sky[2]); gl.uniform1i(TP.u('uTex'), 0);
+    gl.uniform1f(TP.u('uCut'), water ? 0 : 1); gl.uniform1f(TP.u('uAlpha'), .65); gl.bindTexture(gl.TEXTURE_2D, atlasTex);
+    for (const c of vis) for (const m of c.meshes) {
+      if (m.w !== water) continue;
+      gl.uniform3f(TP.u('uOff'), c.cx * CS, 0, c.cz * CS); gl.bindBuffer(gl.ARRAY_BUFFER, m.vb);
+      gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 24, 12); gl.vertexAttribPointer(2, 4, gl.UNSIGNED_BYTE, true, 24, 20);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.ib); gl.drawElements(gl.TRIANGLES, m.n, m.t, 0);
+    }
+  };
+  terr(false);
+  useObj();
+  if (me && view) drawChar(me, P.x, P.y, P.z, P.yaw);
+  for (const o of others.values()) drawChar(o.ch, o.pos.x, o.pos.y, o.pos.z, o.ry);
+  if (selBox) drawGeoObj(wireG, M.mul(M.trans(selBox[0] + .5, selBox[1] + .5, selBox[2] + .5), M.scl(1)), [1.004, 1.004, 1.004], BLACK, 2, 0);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+  terr(true);
+  if (showClouds) { useObj(); gl.disable(gl.CULL_FACE); drawGeoObj(quadG, M.mul(M.trans(P.x, CH + 26, P.z), M.mul(M.rotX(PI / 2), M.scl(900))), [1, 1, 1], BLACK, 3, 0, cloudTex, .75, [5, 5, cloudOff, 0]); gl.enable(gl.CULL_FACE); }
+  gl.useProgram(LP.p); attrs(1); gl.uniformMatrix4fv(LP.u('uP'), false, PROJ); gl.uniformMatrix4fv(LP.u('uV'), false, VIEW); gl.uniform1i(LP.u('uTex'), 0);
+  for (const o of others.values()) drawLabel(o.ch, o.pos.x, o.pos.y, o.pos.z);
+  gl.depthMask(true); gl.disable(gl.BLEND);
+}
+
+function setQ(l) {
+  l = Math.max(0, Math.min(3, l)); const Q = QS[l], redo = Q.ao !== meshOpt.ao || Q.fast !== meshOpt.fast;
+  qLevel = l; R = Q.R; meshOpt.ao = Q.ao; meshOpt.fast = Q.fast; showClouds = !!Q.cl; resizeGL();
+  fogN = R * CS * .5; fogF = R * CS - 6; rescan = true;
+  if (world && redo) for (const c of world.chunks.values()) c.dirty = true;
+  qLabel();
+}
+const MODES = ['auto', 'low', 'med', 'high'];
+function qLabel() { const b = $('qb'); if (b) b.textContent = 'Quality: ' + qMode + (qMode === 'auto' ? ' (' + 'LMHU'[qLevel] + ')' : ''); }
+function setMode(m) { qMode = m; lsSet('mc_q', m); if (m !== 'auto') setQ({ low: 0, med: 2, high: 3 }[m]); qLabel(); }
+
+// ---------- ui ----------
+function icon(id) {
+  const c = document.createElement('canvas'), t = B[id].f[id === 1 ? 0 : 1]; c.width = c.height = 40;
+  const x = c.getContext('2d'); x.imageSmoothingEnabled = false; x.drawImage(atlas, (t % 8) * 16, (t >> 3) * 16, 16, 16, 0, 0, 40, 40); return c;
+}
+function bar() { $('bar').innerHTML = ''; HOT.forEach((id, i) => { const d = document.createElement('div'); if (i === sel) d.className = 'on'; d.appendChild(icon(id)); d.onclick = () => pick(i); $('bar').appendChild(d); }); }
+const pick = i => { sel = (i + 9) % 9; bar(); };
+Object.keys(B).forEach(id => { const d = document.createElement('div'); d.title = B[id].n; d.appendChild(icon(+id)); d.onclick = () => { HOT[sel] = +id; bar(); }; $('pal').appendChild(d); });
+bar();
+function togglePal() { const o = $('pal').style.display === 'flex'; $('pal').style.display = o ? 'none' : 'flex'; if (!o && document.exitPointerLock) document.exitPointerLock(); }
+const others = new Map();
+const hud = () => { $('hp').textContent = '\u2764 ' + hp + '   kills ' + kills + '   players ' + (others.size + 1); };
+function showWho() {
+  $('who').innerHTML = 'Name: ' + name.replace(/[<>&"]/g, '') + ' <button id="clr">Clear name</button> <button id="qb"></button>';
+  $('clr').onclick = () => { lsDel('mc_name'); location.reload(); };
+  $('qb').onclick = () => setMode(MODES[(MODES.indexOf(qMode) + 1) % 4]); qLabel();
+}
+function say(t) { $('msg').style.display = 'block'; $('msg').textContent = t; clearTimeout(say.t); say.t = setTimeout(() => $('msg').style.display = 'none', 4000); }
+const net = (t, c) => { $('net').textContent = '\u25CF ' + t; $('net').style.color = c; };
+
+// ---------- chunk meshes ----------
+function drop(c) { for (const m of c.meshes) { gl.deleteBuffer(m.vb); gl.deleteBuffer(m.ib); } c.meshes = []; }
+function remesh(c) {
+  drop(c);
+  buildMesh(world, c, meshOpt).forEach((o, k) => {
+    if (!o.i.length) return;
+    const nv = o.p.length / 3, big = nv > 65535; if (big && !u32) return;
+    const buf = new ArrayBuffer(nv * 24), f = new Float32Array(buf), u = new Uint8Array(buf);
+    for (let i = 0; i < nv; i++) { const a = i * 6, b3 = i * 3, b = i * 24; f[a] = o.p[b3]; f[a + 1] = o.p[b3 + 1]; f[a + 2] = o.p[b3 + 2]; f[a + 3] = o.u[i * 2]; f[a + 4] = o.u[i * 2 + 1]; u[b + 20] = o.c[b3]; u[b + 21] = o.c[b3 + 1]; u[b + 22] = o.c[b3 + 2]; u[b + 23] = 255; }
+    const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, buf, gl.STATIC_DRAW);
+    const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, big ? new Uint32Array(o.i) : new Uint16Array(o.i), gl.STATIC_DRAW);
+    c.meshes.push({ vb, ib, n: o.i.length, t: big ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT, w: k === 1 });
+  });
+  c.dirty = false;
+}
+let need = [], lpx = 1e9, lpz = 1e9;
+function work(budget) {
+  const t0 = performance.now(), pcx = Math.floor(P.x / CS), pcz = Math.floor(P.z / CS);
+  if (pcx !== lpx || pcz !== lpz || rescan) {
+    lpx = pcx; lpz = pcz; rescan = false; need = [];
+    for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) if (dx * dx + dz * dz <= R * R && !world.chunks.has(ck(pcx + dx, pcz + dz))) need.push([dx * dx + dz * dz, pcx + dx, pcz + dz]);
+    need.sort((a, b) => a[0] - b[0]);
+    for (const [k, c] of world.chunks) if (Math.hypot(c.cx - pcx, c.cz - pcz) > R + 2) { drop(c); world.chunks.delete(k); }
+  }
+  const ds = []; for (const c of world.chunks.values()) if (c.dirty) ds.push(c);
+  if (ds.length) { ds.sort((a, b) => Math.hypot(a.cx - pcx, a.cz - pcz) - Math.hypot(b.cx - pcx, b.cz - pcz)); for (const c of ds) { remesh(c); if (performance.now() - t0 > budget) return; } }
+  while (need.length) {
+    const [, cx, cz] = need.shift(); if (world.chunks.has(ck(cx, cz))) continue;
+    world.gen(cx, cz); tx({ t: 'chunk', cx, cz });
+    const om = oe.get(ck(cx, cz)); if (om) for (const [k, id] of om) { const [x, y, z] = k.split(',').map(Number); world.set(x, y, z, id); }
+    if (performance.now() - t0 > budget) break;
+  }
+}
+
+// ---------- characters ----------
+function hsl(h, s, l) { const a = s * Math.min(l, 1 - l), f = n => { const k = (n + h * 12) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); }; return [f(0), f(8), f(4)]; }
+function makeChar(nm) {
+  let hs = 0; for (const c of nm) hs = (hs * 31 + c.charCodeAt(0)) % 360;
+  const lc = document.createElement('canvas'); lc.width = 256; lc.height = 64; const t = lc.getContext('2d');
+  t.fillStyle = 'rgba(0,0,0,.45)'; t.fillRect(0, 0, 256, 64); t.fillStyle = '#fff'; t.font = '30px monospace'; t.textAlign = 'center'; t.fillText(nm, 128, 42);
+  return { shirt: hsl(hs / 360, .6, .5), pants: hsl(((hs + 180) % 360) / 360, .5, .3), label: mkTex(lc, false, true), swingT: 0, flash: 0, ll: 0, lr: 0, al: 0, ar: 0 };
+}
+function pose(ch, speed, t, dt) {
+  const s = Math.sin(t * 9) * Math.min(1, speed / 4) * .9;
+  ch.ll = s; ch.lr = -s; ch.al = -s; ch.ar = s;
+  if (ch.swingT > 0) { ch.swingT -= dt; ch.ar = -1.9 * Math.sin(PI * (1 - Math.max(0, ch.swingT) / .3)); }
+  if (ch.flash > 0) ch.flash -= dt;
+}
+function addPlayer(p) {
+  if (others.has(p.id)) return; const ch = makeChar(p.name), x = p.x ?? 0, y = p.y ?? 90, z = p.z ?? 0;
+  others.set(p.id, { ch, pos: { x, y, z }, t: { x, y, z }, ry: p.ry || 0, last: { x, z }, sp: 0 }); hud();
+}
+function removePlayer(id) { const o = others.get(id); if (o) { gl.deleteTexture(o.ch.label); others.delete(id); hud(); } }
+function clearOthers() { for (const id of [...others.keys()]) removePlayer(id); }
+
+// ---------- network ----------
+let ws = null, online = false, retry = 0, lastRx = 0, worldReset = false;
+const oe = new Map();
+const URL_WS = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+function tx(o) { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); } catch { } }
+function connect() {
+  clearTimeout(connect.t); if (ws) return;
+  let sock; net('Connecting...', '#fc6');
+  try { sock = new WebSocket(URL_WS); } catch { return later(); }
+  ws = sock;
+  sock.onopen = () => { if (ws !== sock) return; lastRx = performance.now(); sock.send(JSON.stringify({ t: 'join', name })); };
+  sock.onmessage = e => { if (ws !== sock) return; lastRx = performance.now(); let m; try { m = JSON.parse(e.data); } catch { return; } try { onMsg(m); } catch (err) { console.error(err); } };
+  const bad = () => { if (ws !== sock) return; ws = null; online = false; net(started ? 'Offline (edits not shared)' : 'Server waking up...', '#f66'); later(); };
+  sock.onclose = bad; sock.onerror = bad;
+}
+function later() { retry++; clearTimeout(connect.t); connect.t = setTimeout(connect, Math.min(8000, 1000 * 2 ** Math.min(retry, 3))); }
+setInterval(() => { if (online) { tx({ t: 'ping' }); if (performance.now() - lastRx > 40000 && ws) try { ws.close(); } catch { } } }, 15000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !ws) { retry = 0; connect(); } });
+addEventListener('online', () => { if (!ws) { retry = 0; connect(); } });
+function resetWorld(seed) { oe.clear(); if (world) for (const c of world.chunks.values()) drop(c); world = new World(seed); rescan = true; need = []; worldReset = true; }
+function spawn() {
+  for (let r = 0; r < 800; r += 12) for (let a = 0; a < 6.3; a += .8) {
+    const x = Math.floor(Math.cos(a + Math.random()) * r + (Math.random() * 20 - 10)), z = Math.floor(Math.sin(a) * r), { h } = world.column(x, z);
+    if (h > SEA + 1) { P.x = x + .5; P.z = z + .5; P.y = h + 2; P.vy = P.kx = P.kz = 0; return; }
+  }
+  P.y = 90; P.vy = 0;
+}
+function startGame() { me = makeChar(name); spawn(); started = true; hud(); frame(); }
+function startOffline() { if (started) return; resetWorld(Math.floor(Math.random() * 1e9)); startGame(); net('Offline (edits not shared)', '#f66'); }
+function onMsg(m) {
+  switch (m.t) {
+    case 'init': {
+      online = true; retry = 0; myId = m.id; hp = m.hp || 20; const same = world && world.seed === m.seed;
+      if (!same) resetWorld(m.seed);
+      clearOthers(); (m.players || []).forEach(addPlayer);
+      if (!started) startGame(); else if (!same) spawn(); else for (const c of world.chunks.values()) tx({ t: 'chunk', cx: c.cx, cz: c.cz });
+      net('Online', '#6f6'); hud(); if (!same && worldReset) say('Joined the shared world'); worldReset = false; break;
+    }
+    case 'join': addPlayer(m); say(m.name + ' joined'); break;
+    case 'leave': removePlayer(m.id); break;
+    case 'pos': { const o = others.get(m.id); if (o) { o.t.x = m.x; o.t.y = m.y; o.t.z = m.z; o.ry = m.ry; } break; }
+    case 'swing': { const o = others.get(m.id); if (o) o.ch.swingT = .3; break; }
+    case 'set': if (world) world.set(m.x, m.y, m.z, m.id); break;
+    case 'chunk': if (world) for (const [x, y, z, id] of m.e) world.set(x, y, z, id); break;
+    case 'hp': if (m.id === myId) { if (m.hp < hp) flashHurt(); hp = m.hp; hud(); } else { const o = others.get(m.id); if (o) o.ch.flash = .25; } break;
+    case 'kb': P.kx = m.x * 9; P.kz = m.z * 9; P.vy = 6.5; break;
+    case 'dead': say(m.byName + ' eliminated ' + m.name); break;
+    case 'respawn': hp = 20; spawn(); hud(); break;
+    case 'kill': kills++; hud(); break;
+  }
+}
+function flashHurt() { $('hurt').style.opacity = .35; setTimeout(() => $('hurt').style.opacity = 0, 150); }
+function start() { $('menu').style.display = 'none'; showWho(); net('Connecting...', '#fc6'); setQ(qLevel); connect(); setTimeout(startOffline, 5000); }
+
+// ---------- player ----------
+const P = { x: 0, y: 90, z: 0, vx: 0, vy: 0, vz: 0, kx: 0, kz: 0, jx: 0, jy: 0, yaw: 0, pitch: 0, fly: false, ground: false, speed: 0 }, keys = {};
+function hits(px, py, pz) {
+  for (let x = Math.floor(px - .3), x1 = Math.floor(px + .3); x <= x1; x++) for (let y = Math.floor(py), y1 = Math.floor(py + 1.79); y <= y1; y++) for (let z = Math.floor(pz - .3), z1 = Math.floor(pz + .3); z <= z1; z++) if (solid(world.get(x, y, z))) return true;
+  return false;
+}
+function hurtLocal(d) { if (online) return tx({ t: 'fall', d }); hp -= d; flashHurt(); if (hp <= 0) { hp = 20; spawn(); } hud(); }
+function physics(dt) {
+  if (!world.chunk(P.x, P.z)) return;
+  const water = world.get(Math.floor(P.x), Math.floor(P.y + .6), Math.floor(P.z)) === 7, wasG = P.ground;
+  const run = keys.ShiftLeft || (touch && Math.hypot(P.jx, P.jy) > .95), sp = (run && !P.fly ? 6.5 : 4.5) * (P.fly ? 2 : water ? .6 : 1);
+  const fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw), rx = Math.cos(P.yaw), rz = -Math.sin(P.yaw);
+  let mx = P.jx * rx - P.jy * fx, mz = P.jx * rz - P.jy * fz;
+  if (keys.KeyW) { mx += fx; mz += fz; } if (keys.KeyS) { mx -= fx; mz -= fz; } if (keys.KeyD) { mx += rx; mz += rz; } if (keys.KeyA) { mx -= rx; mz -= rz; }
+  const l = Math.max(1, Math.hypot(mx, mz)), mv = mx || mz; P.vx = mx / l * sp + P.kx; P.vz = mz / l * sp + P.kz;
+  const dec = Math.pow(.01, dt); P.kx *= dec; P.kz *= dec;
+  if (P.fly) P.vy = keys.Space ? sp : keys.ShiftLeft ? -sp : 0;
+  else if (water) { P.vy = Math.max(P.vy - 9 * dt, -3); if (keys.Space) P.vy = 3.5; }
+  else { P.vy = Math.max(P.vy - 28 * dt, -40); if (keys.Space && wasG) P.vy = 8.5; }
+  P.ground = false; let impact = 0;
+  for (let i = 0; i < 3; i++) {
+    const s = dt / 3, nx = P.x + P.vx * s, nz = P.z + P.vz * s;
+    if (!hits(nx, P.y, P.z)) P.x = nx; else if (touch && wasG && mv && !hits(nx, P.y + 1.05, P.z)) P.vy = 8.5;
+    if (!hits(P.x, P.y, nz)) P.z = nz; else if (touch && wasG && mv && !hits(P.x, P.y + 1.05, nz)) P.vy = 8.5;
+    const dy = P.vy * s;
+    if (hits(P.x, P.y + dy, P.z)) { if (dy < 0) { P.ground = true; if (P.vy < -14 && !P.fly && !water) impact = -P.vy; } P.vy = 0; } else P.y += dy;
+  }
+  if (impact) { const d = Math.floor((impact - 13) / 2.2); if (d > 0) hurtLocal(Math.min(d, 10)); }
+  P.speed = P.fly ? 0 : Math.hypot(mx / l * sp, mz / l * sp) * (P.ground || water ? 1 : .5);
+  if (P.y < -30) spawn();
+}
+
+// ---------- targeting & actions ----------
+function castBlocks(ox, oy, oz, dx, dy, dz, max) {
+  let x = Math.floor(ox), y = Math.floor(oy), z = Math.floor(oz), px = x, py = y, pz = z, t = 0;
+  const sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1, sz = dz > 0 ? 1 : -1, tdx = dx ? Math.abs(1 / dx) : 1e9, tdy = dy ? Math.abs(1 / dy) : 1e9, tdz = dz ? Math.abs(1 / dz) : 1e9;
+  let tmx = dx ? (dx > 0 ? x + 1 - ox : ox - x) * tdx : 1e9, tmy = dy ? (dy > 0 ? y + 1 - oy : oy - y) * tdy : 1e9, tmz = dz ? (dz > 0 ? z + 1 - oz : oz - z) * tdz : 1e9;
+  for (let i = 0; i < 80; i++) {
+    if (i > 0) { const b2 = world.get(x, y, z); if (b2 > 0 && b2 !== 7) return { hit: [x, y, z], prev: [px, py, pz], t }; }
+    px = x; py = y; pz = z;
+    if (tmx < tmy && tmx < tmz) { t = tmx; tmx += tdx; x += sx; } else if (tmy < tmz) { t = tmy; tmy += tdy; y += sy; } else { t = tmz; tmz += tdz; z += sz; }
+    if (t > max) break;
+  }
+  return null;
+}
+function ray() {
+  const reach = view ? D + 5 : 6, r = castBlocks(cam.x, cam.y, cam.z, look.x, look.y, look.z, reach);
+  let tb = r ? r.t : reach, best = 0;
+  for (const [id, p] of others) {
+    const c = p.pos, vx = c.x - cam.x, vy = c.y + .9 - cam.y, vz = c.z - cam.z, t = vx * look.x + vy * look.y + vz * look.z;
+    if (t > 0 && t < tb && vx * vx + vy * vy + vz * vz - t * t < .36 && Math.hypot(c.x - P.x, c.y - P.y, c.z - P.z) < 5) { tb = t; best = id; }
+  }
+  return best ? { pl: best } : r;
+}
+function edit(x, y, z, id) {
+  if (!online) { const k = ck(x >> 4, z >> 4); let m = oe.get(k); if (!m) oe.set(k, m = new Map()); m.set(x + ',' + y + ',' + z, id); }
+  world.set(x, y, z, id); tx({ t: 'set', x, y, z, id });
+}
+let lastAct = -9, tt = 0, hold = null;
+function act(btn) {
+  if (!started || $('pal').style.display === 'flex' || (!touch && !document.pointerLockElement)) return;
+  const r = ray(); if (tt - lastAct < (btn === 0 && r && r.pl ? .32 : .18)) return; lastAct = tt;
+  if (btn === 0) {
+    me.swingT = .3; tx({ t: 'swing' });
+    if (r && r.pl) tx({ t: 'hit', id: r.pl }); else if (r && r.hit && world.get(r.hit[0], r.hit[1], r.hit[2]) !== 11) edit(r.hit[0], r.hit[1], r.hit[2], 0);
+  } else if (r && r.prev && !r.pl) {
+    const [x, y, z] = r.prev, id = HOT[sel], ov = P.x + .3 > x && P.x - .3 < x + 1 && P.y + 1.8 > y && P.y < y + 1 && P.z + .3 > z && P.z - .3 < z + 1;
+    if ((!ov || id >= 40) && y < CH - 1 && world.get(x, y, z) < 41) edit(x, y, z, id);
+  }
+}
+
+// ---------- input ----------
+cv.addEventListener('click', () => { if (!touch && !document.pointerLockElement && cv.requestPointerLock) cv.requestPointerLock(); });
+addEventListener('mousemove', e => { if (document.pointerLockElement) { P.yaw -= e.movementX * .0025; P.pitch = Math.max(-1.5, Math.min(1.5, P.pitch - e.movementY * .0025)); } });
+addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'KeyF') P.fly = !P.fly; if (e.code === 'KeyV') view ^= 1; if (e.code === 'KeyE') togglePal(); if (/^Digit[1-9]$/.test(e.code)) pick(+e.code.slice(5) - 1); });
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; hold = null; });
+addEventListener('wheel', e => pick(sel + Math.sign(e.deltaY)));
+cv.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('mousedown', e => { hold = e.button === 2 ? 2 : 0; act(hold); });
+addEventListener('mouseup', () => { hold = null; });
+if (touch) {
+  let jid = null, lid = null, jo, lp;
+  const joy = $('joy'), knob = $('knob');
+  addEventListener('touchstart', e => { for (const t of e.changedTouches) { if (t.target.closest && t.target.closest('button,#pal,#bar,#who')) continue; if (t.clientX < innerWidth * .45 && jid === null) { jid = t.identifier; jo = [t.clientX, t.clientY]; joy.style.left = t.clientX + 'px'; joy.style.top = t.clientY + 'px'; joy.style.display = 'block'; } else if (lid === null) { lid = t.identifier; lp = [t.clientX, t.clientY]; } } }, { passive: true });
+  addEventListener('touchmove', e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === jid) { P.jx = Math.max(-1, Math.min(1, (t.clientX - jo[0]) / 50)); P.jy = Math.max(-1, Math.min(1, (t.clientY - jo[1]) / 50)); knob.style.left = 30 + P.jx * 30 + 'px'; knob.style.top = 30 + P.jy * 30 + 'px'; }
+      else if (t.identifier === lid) { P.yaw -= (t.clientX - lp[0]) * .006; P.pitch = Math.max(-1.5, Math.min(1.5, P.pitch - (t.clientY - lp[1]) * .006)); lp = [t.clientX, t.clientY]; }
+    }
+  }, { passive: true });
+  const end = e => { for (const t of e.changedTouches) { if (t.identifier === jid) { jid = null; P.jx = P.jy = 0; joy.style.display = 'none'; knob.style.left = knob.style.top = '30px'; } if (t.identifier === lid) lid = null; } };
+  addEventListener('touchend', end); addEventListener('touchcancel', end);
+  const hb = (id, f, up) => { const b2 = $(id); b2.addEventListener('touchstart', e => { e.preventDefault(); f(); }, { passive: false }); b2.addEventListener('touchend', e => { e.preventDefault(); if (up) up(); }, { passive: false }); };
+  hb('bj', () => { keys.Space = true; }, () => { keys.Space = false; });
+  hb('ba', () => { hold = 0; act(0); }, () => { hold = null; });
+  hb('bp', () => { hold = 2; act(2); }, () => { hold = null; });
+  hb('bv', () => { view ^= 1; }); hb('be', togglePal);
+}
+
+// ---------- main loop ----------
+let last = performance.now(), sendT = 0, sentKey = '', posT = 0, skyT = 0, fpsT = 0, fpsN = 0, good = 0, lastDown = -99, warm = 2, errs = 0, regenT = 0, looping = false;
+function frame() {
+  if (!looping) looping = true; else if (frame.busy) { }
+  requestAnimationFrame(frame);
+  const now = performance.now(), raw = (now - last) / 1000; last = now;
+  if (raw > .5) return;
+  const dt = Math.min(.05, raw); tt += dt;
+  try {
+    work(QS[qLevel].b); physics(dt);
+    look.x = -Math.sin(P.yaw) * Math.cos(P.pitch); look.y = Math.sin(P.pitch); look.z = -Math.cos(P.yaw) * Math.cos(P.pitch);
+    const hx = P.x, hy = P.y + 1.6, hz = P.z;
+    if (view) {
+      const rx = Math.cos(P.yaw) * .7, rz = -Math.sin(P.yaw) * .7; let k = 1;
+      for (let q = .04; q <= 1; q += .04) { const cx = hx + rx * q - look.x * D * q, cy = hy + .25 * q - look.y * D * q, cz = hz + rz * q - look.z * D * q; if (solid(world.get(Math.floor(cx), Math.floor(cy), Math.floor(cz)))) { k = Math.max(0, q - .1); break; } }
+      cam.x = hx + rx * k - look.x * D * k; cam.y = hy + .25 * k - look.y * D * k; cam.z = hz + rz * k - look.z * D * k;
+    } else { cam.x = hx; cam.y = hy; cam.z = hz; }
+    const fov = 75 + (P.speed > 5.5 ? 7 : 0); cam.fov += (fov - cam.fov) * .15;
+    pose(me, P.speed, tt, dt);
+    const r = ray(); selBox = r && r.hit ? r.hit : null;
+    if (hold !== null && tt - lastAct > .2) act(hold);
+    for (const o of others.values()) {
+      const p = o.pos; p.x += (o.t.x - p.x) * .25; p.y += (o.t.y - p.y) * .25; p.z += (o.t.z - p.z) * .25;
+      o.sp += (Math.hypot(p.x - o.last.x, p.z - o.last.z) / Math.max(dt, .001) - o.sp) * .2; o.last.x = p.x; o.last.z = p.z; pose(o.ch, o.sp, tt, dt);
+    }
+    if ((sendT += dt) > .1) { sendT = 0; const key = P.x.toFixed(2) + P.y.toFixed(2) + P.z.toFixed(2) + P.yaw.toFixed(2); if (key !== sentKey || tt - posT > 1) { sentKey = key; posT = tt; tx({ t: 'pos', x: P.x, y: P.y, z: P.z, ry: P.yaw }); } }
+    if ((skyT += dt) > .5) {
+      skyT = 0; const sh = Math.sin(((Date.now() / 1000) / 600 % 1) * 6.2832), Lt = Math.max(.2, Math.min(1, sh * 1.4 + .55)), k = (Lt - .2) / .8;
+      sky = [SKYN[0] + (SKYD[0] - SKYN[0]) * k, SKYN[1] + (SKYD[1] - SKYN[1]) * k, SKYN[2] + (SKYD[2] - SKYN[2]) * k]; tint = [Lt, Lt, Math.min(1, Lt * 1.12 + .04)];
+    }
+    cloudOff += dt * .0015;
+    if (!online && hp < 20 && (regenT += dt) > 4) { regenT = 0; hp++; hud(); }
+    fpsT += raw; fpsN++;
+    if (fpsT > 2.5) {
+      const fps = fpsN / fpsT; fpsT = fpsN = 0;
+      if (qMode === 'auto') { if (warm > 0) warm--; else if (fps < 26 && qLevel > 0) { setQ(qLevel - 1); lastDown = tt; good = 0; warm = 1; } else if (fps >= 56) { if (++good >= 4 && qLevel < qMax && tt - lastDown > 40) { setQ(qLevel + 1); good = 0; warm = 1; } } else good = 0; }
+    }
+    render(); errs = 0;
+  } catch (e) { if (++errs < 4) console.error(e); if (errs === 3) say('Render error: ' + e.message); }
+}
+if (qMode !== 'auto') setMode(qMode);
+resizeGL();
+if (name) start();
+
+})();
+</script>
+</body></html>
